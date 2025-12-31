@@ -1,0 +1,89 @@
+#include "IPCManager.h"
+#include <windows.h>
+#include <iostream>
+
+IPCManager::IPCManager() : hPipe(INVALID_HANDLE_VALUE), isRunning(false) {}
+
+bool IPCManager::StartServer() {
+    hPipe = CreateNamedPipeW(
+        L"\\\\.\\pipe\\UpdateServicePipe",
+        PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+        PIPE_UNLIMITED_INSTANCES,
+        4096,
+        4096,
+        NMPWAIT_USE_DEFAULT_WAIT,
+        NULL
+    );
+    
+    if (hPipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    
+    isRunning = true;
+    return true;
+}
+
+void IPCManager::StopServer() {
+    isRunning = false;
+    if (hPipe != INVALID_HANDLE_VALUE) {
+        DisconnectNamedPipe(hPipe);
+        CloseHandle(hPipe);
+        hPipe = INVALID_HANDLE_VALUE;
+    }
+}
+
+std::wstring IPCManager::WaitForCommand() {
+    if (!ConnectNamedPipe(hPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
+        return L"";
+    }
+    
+    wchar_t buffer[4096];
+    DWORD bytesRead;
+    
+    if (ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, NULL)) {
+        buffer[bytesRead / sizeof(wchar_t)] = L'\0';
+        return std::wstring(buffer);
+    }
+    
+    return L"";
+}
+
+bool IPCManager::SendResponse(const std::wstring& response) {
+    DWORD bytesWritten;
+    return WriteFile(
+        hPipe,
+        response.c_str(),
+        (response.length() + 1) * sizeof(wchar_t),
+        &bytesWritten,
+        NULL
+    ) != FALSE;
+}
+
+bool IPCManager::SendCommand(const std::wstring& command) {
+    HANDLE hClientPipe = CreateFileW(
+        L"\\\\.\\pipe\\UpdateServicePipe",
+        GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL
+    );
+    
+    if (hClientPipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    
+    DWORD bytesWritten;
+    BOOL result = WriteFile(
+        hClientPipe,
+        command.c_str(),
+        (command.length() + 1) * sizeof(wchar_t),
+        &bytesWritten,
+        NULL
+    );
+    
+    CloseHandle(hClientPipe);
+    return result != FALSE;
+}
